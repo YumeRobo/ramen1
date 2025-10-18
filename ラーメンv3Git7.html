@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>ラーメン大戦略 (v3)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            touch-action: none;
+            overscroll-behavior: none;
+        }
+
+        #phone-container {
+            width: 100%;
+            max-width: 480px;
+            height: 95vh;
+            max-height: 900px;
+        }
+
+        .control-button {
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+        .control-button:active {
+            transform: translateY(2px);
+            box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+        }
+        .control-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: translateY(0);
+        }
+
+        #minimap-container {
+            position: absolute; top: 10px; right: 10px; border: 2px solid #6b7280;
+            background-color: rgba(0,0,0,0.5); z-index: 20;
+        }
+        .modal-overlay { transition: opacity 0.3s ease; }
+
+        /* 攻撃アニメーション */
+        @keyframes attacker-charge {
+            0% { transform: translateX(0); }
+            50% { transform: translateX(10%); }
+            100% { transform: translateX(0); }
+        }
+        @keyframes defender-knockback {
+            0% { transform: translateX(0); }
+            70% { transform: translateX(20%); }
+            100% { transform: translateX(0); }
+        }
+        @keyframes damagePopup {
+            0% { transform: translateY(0) scale(0.5); opacity: 0; }
+            50% { transform: translateY(-20px) scale(1.2); opacity: 1; }
+            100% { transform: translateY(-40px) scale(1); opacity: 0; }
+        }
+        
+        .animating-attack { animation: attacker-charge 0.5s ease-in-out forwards; }
+        .animating-defense { animation: defender-knockback 1s ease-out forwards; }
+        .animate-damagePopup { animation: damagePopup 1.5s ease-in-out forwards; }
+    </style>
+</head>
+<body class="bg-gray-800 flex items-center justify-center h-screen overflow-hidden">
+
+    <div id="phone-container" class="bg-gray-900 rounded-[40px] border-8 border-gray-700 shadow-2xl flex flex-col p-4 overflow-hidden">
+        <!-- ゲーム画面 -->
+        <div id="game-screen" class="w-full flex-grow bg-black rounded-lg overflow-hidden relative">
+            <canvas id="gameCanvas"></canvas>
+            <div id="minimap-container"><canvas id="minimapCanvas"></canvas></div>
+            
+            <!-- 攻撃アニメーション用オーバーレイ -->
+            <div id="attack-animation-overlay" class="absolute inset-0 z-30 hidden items-center justify-center p-4">
+                <div class="absolute inset-0 bg-black bg-opacity-70 backdrop-blur-sm"></div>
+                <div class="relative w-full flex justify-around items-center">
+                    <!-- アタッカー -->
+                    <div class="flex flex-col items-center">
+                        <div id="attacker-anim-sprite" class="w-24 h-24 md:w-32 md:h-32 bg-contain bg-no-repeat bg-center"></div>
+                        <span class="text-white text-lg font-bold mt-2">攻撃側</span>
+                    </div>
+                    
+                    <!-- ダメージインジケータ -->
+                    <div id="damage-indicator" class="absolute w-full text-center text-5xl font-bold text-red-500" style="text-shadow: 2px 2px #fff; z-index: 10;"></div>
+
+                    <!-- ディフェンダー -->
+                    <div class="flex flex-col items-center">
+                        <div id="defender-anim-sprite" class="w-24 h-24 md:w-32 md:h-32 bg-contain bg-no-repeat bg-center"></div>
+                        <span class="text-white text-lg font-bold mt-2">防御側</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ローディング/勝敗モーダル -->
+            <div id="loading-overlay" class="absolute inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center text-white z-50">
+                <div class="text-2xl mb-4 font-bold">ラーメン大戦略</div>
+                <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12 mb-4 animate-spin border-t-blue-500"></div>
+                <p id="loading-text">画像を読み込み中...</p>
+            </div>
+            <div id="victory-modal" class="modal-overlay absolute inset-0 bg-black bg-opacity-70 flex-col items-center justify-center text-white z-40 hidden opacity-0">
+                 <h2 id="victory-text" class="text-4xl font-bold mb-4"></h2>
+                <button id="restart-button" class="mt-4 px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold">もう一度プレイ</button>
+            </div>
+            
+            <!-- メッセージモーダル (alertの代わり) -->
+            <div id="message-modal" class="modal-overlay fixed inset-0 bg-black bg-opacity-30 z-50 hidden items-center justify-center p-4">
+                <div class="bg-gray-900 rounded-lg shadow-2xl p-6 text-center transform scale-100 transition-transform duration-300">
+                    <p id="message-content" class="text-white text-lg font-semibold"></p>
+                    <button id="close-message-modal" class="mt-4 px-4 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">OK</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 情報パネル -->
+        <div id="info-panel" class="w-full h-20 bg-gray-800 my-2 rounded-lg flex items-center justify-between text-white text-xs px-2">
+            <div id="unit-info" class="w-1/2 h-full p-1"></div>
+            <div id="terrain-info" class="w-1/2 h-full p-1 border-l border-gray-600"></div>
+        </div>
+
+        <!-- 操作パネル -->
+        <div id="control-panel" class="w-full grid grid-cols-4 gap-2">
+            <button id="btn-search" class="control-button bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 rounded-lg" disabled>捜索</button>
+            <button id="btn-invade" class="control-button bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 rounded-lg" disabled>侵略 (0/3)</button>
+            <button id="btn-units" class="control-button bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 rounded-lg">ユニット</button>
+            <button id="btn-terrain" class="control-button bg-green-600 hover:bg-green-700 text-white font-bold py-2 rounded-lg">地形</button>
+            <button id="btn-end-turn" class="control-button col-span-4 bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 rounded-lg">ターン終了</button>
+        </div>
+    </div>
+    
+    <!-- ユニット一覧モーダル -->
+    <div id="unit-list-modal" class="modal-overlay fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4">
+        <div class="bg-gray-800 bg-opacity-75 backdrop-blur-md text-white rounded-lg shadow-xl w-full max-w-md max-h-[80vh] flex flex-col">
+            <div class="p-4 border-b border-gray-700 flex justify-between items-center">
+                <h3 class="text-lg font-bold">ユニット一覧</h3>
+                <button id="close-unit-modal" class="px-2 py-1 rounded bg-red-600">&times;</button>
+            </div>
+            <div id="unit-list-content" class="p-4 overflow-y-auto"></div>
+        </div>
+    </div>
+
+    <!-- 地形一覧モーダル -->
+    <div id="terrain-info-modal" class="modal-overlay fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4">
+         <div class="bg-gray-800 bg-opacity-75 backdrop-blur-md text-white rounded-lg shadow-xl w-full max-w-md max-h-[80vh] flex flex-col">
+            <div class="p-4 border-b border-gray-700 flex justify-between items-center">
+                <h3 class="text-lg font-bold">地形情報</h3>
+                <button id="close-terrain-modal" class="px-2 py-1 rounded bg-red-600">&times;</button>
+            </div>
+            <div id="terrain-list-content" class="p-4 overflow-y-auto"></div>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM要素取得 ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const minimapCanvas = document.getElementById('minimapCanvas');
+        const m_ctx = minimapCanvas.getContext('2d');
+        const gameScreen = document.getElementById('game-screen');
+        const unitInfoDiv = document.getElementById('unit-info');
+        const terrainInfoDiv = document.getElementById('terrain-info');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingText = document.getElementById('loading-text');
+        const victoryModal = document.getElementById('victory-modal');
+        const victoryText = document.getElementById('victory-text');
+        const restartButton = document.getElementById('restart-button');
+        const attackAnimOverlay = document.getElementById('attack-animation-overlay');
+        const attackerSpriteDiv = document.getElementById('attacker-anim-sprite');
+        const defenderSpriteDiv = document.getElementById('defender-anim-sprite');
+        const damageIndicator = document.getElementById('damage-indicator');
+        const unitListModal = document.getElementById('unit-list-modal');
+        const terrainInfoModal = document.getElementById('terrain-info-modal');
+        const messageModal = document.getElementById('message-modal');
+        const closeMessageModalBtn = document.getElementById('close-message-modal');
+        
+        // --- ゲーム定数 ---
+        const MAP_WIDTH = 10;
+        const MAP_HEIGHT = 10;
+        const SPRITE_SHEET_SIZE = 1024;
+        const SPRITE_GRID_SIZE = 4;
+        const TILE_SPRITE_SIZE = SPRITE_SHEET_SIZE / SPRITE_GRID_SIZE;
+        const ENEMY_CAPITAL = { x: MAP_WIDTH - 1, y: MAP_HEIGHT - 1 };
+
+        // --- 画像設定 ---
+        const IMAGE_URLS = {
+            ramen: 'https://raw.githubusercontent.com/YumeRobo/ramen1/main/ramen16T.png',
+            terrain1: 'https://raw.githubusercontent.com/YumeRobo/ramen1/main/tera1.png',
+            terrain2: 'https://raw.githubusercontent.com/YumeRobo/ramen1/main/tera2.png',
+        };
+        const images = {};
+
+        // --- 地形とユニットの定義 ---
+        const TERRAIN_TYPES = {
+            plain: { name: '平地', sheet: 'terrain1', index: 14, moveCost: 1, defense: 1 },
+            forest: { name: '森', sheet: 'terrain1', index: 1, moveCost: 2, defense: 3 },
+            mountain: { name: '山', sheet: 'terrain1', index: 6, moveCost: 3, defense: 4 },
+            road: { name: '道', sheet: 'terrain1', index: 2, moveCost: 1, defense: 0 },
+            water: { name: '海', sheet: 'terrain1', index: 13, moveCost: 99, defense: 0 },
+            city: { name: '都市', sheet: 'terrain2', index: 5, moveCost: 1, defense: 2, isCapital: false },
+        };
+
+        const UNIT_TYPES = {
+            shoyu: { name: '醤油ラーメン', spriteIndex: 0, maxHp: 20, attack: 8, defense: 2, moveRange: 4, attackRange: 1 },
+            miso: { name: '味噌ラーメン', spriteIndex: 2, maxHp: 25, attack: 7, defense: 3, moveRange: 3, attackRange: 1 },
+            tonkotsu: { name: '豚骨ラーメン', spriteIndex: 3, maxHp: 18, attack: 9, defense: 1, moveRange: 5, attackRange: 1 },
+            shio: { name: '塩ラーメン', spriteIndex: 7, maxHp: 15, attack: 6, defense: 1, moveRange: 4, attackRange: 2 },
+        };
+
+        // --- ゲーム状態変数 ---
+        let tileSize = 0, mapData = [], units = [], camera = { x: 0, y: 0 };
+        let selectedUnit = null, currentTurn = 'player', gameState = 'LOADING';
+        let moveHighlights = [], attackHighlights = [];
+        let invasionCount = 0;
+
+        // --- カメラ制御 ---
+        let isDragging = false, hasDragged = false, lastMouseX = 0, lastMouseY = 0;
+        let cameraBounds = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+
+
+        // --- ゲーム初期化 ---
+        function init() { loadImages(); }
+
+        function loadImages() {
+            let loadedCount = 0;
+            const totalImages = Object.keys(IMAGE_URLS).length;
+            
+            if (totalImages === 0) {
+                 startGame();
+                 return;
+            }
+
+            for (const key in IMAGE_URLS) {
+                images[key] = new Image();
+                images[key].crossOrigin = "Anonymous";
+                images[key].onload = () => {
+                    loadedCount++;
+                    loadingText.textContent = `画像を読み込み中... (${loadedCount}/${totalImages})`;
+                    if (loadedCount === totalImages) {
+                        setTimeout(() => {
+                            loadingOverlay.style.display = 'none';
+                            startGame();
+                        }, 500);
+                    }
+                };
+                images[key].onerror = () => {
+                   console.error(`Error loading image: ${IMAGE_URLS[key]}`);
+                   loadedCount++;
+                   if (loadedCount === totalImages) {
+                        setTimeout(() => {
+                            loadingOverlay.style.display = 'none';
+                            startGame();
+                        }, 500);
+                    }
+                };
+                images[key].src = IMAGE_URLS[key];
+            }
+        }
+
+        function startGame() {
+            victoryModal.classList.add('hidden', 'opacity-0');
+            messageModal.classList.add('hidden');
+            gameState = 'IDLE';
+            currentTurn = 'player';
+            units = [];
+            selectedUnit = null;
+            moveHighlights = [];
+            attackHighlights = [];
+            invasionCount = 0;
+            generateMap();
+            generateUnits();
+            resizeCanvas(); 
+            setupEventListeners();
+            updateUI();
+            gameLoop();
+        }
+
+        function generateMap() {
+            mapData = Array.from({ length: MAP_HEIGHT }, (_, y) => Array.from({ length: MAP_WIDTH }, (_, x) => {
+                const r = Math.random();
+                let tileType;
+                if (r < 0.5) tileType = 'plain';
+                else if (r < 0.7) tileType = 'forest';
+                else if (r < 0.8) tileType = 'mountain';
+                else if (r < 0.9) tileType = 'road';
+                else tileType = 'city';
+
+                if (x < 3 && y < 3) tileType = 'plain';
+                
+                return { ...TERRAIN_TYPES[tileType] };
+            }));
+            
+            mapData[ENEMY_CAPITAL.y][ENEMY_CAPITAL.x] = { ...TERRAIN_TYPES.city, isCapital: true, name: '首都' };
+        }
+
+        function generateUnits() {
+            let playerUnitCount = 1;
+            let enemyUnitCount = 1;
+            const createUnit = (owner, x, y, typeKey) => {
+                const type = UNIT_TYPES[typeKey];
+                const displayId = owner === 'player' ? 'P' + playerUnitCount++ : 'E' + enemyUnitCount++;
+                return { id: (playerUnitCount + enemyUnitCount), owner, x, y, displayId, ...type, hp: type.maxHp, moved: false };
+            };
+            units.push(createUnit('player', 1, 1, 'shoyu'));
+            units.push(createUnit('player', 2, 1, 'miso'));
+            units.push(createUnit('enemy', MAP_WIDTH - 2, MAP_HEIGHT - 2, 'tonkotsu'));
+            units.push(createUnit('enemy', MAP_WIDTH - 3, MAP_HEIGHT - 2, 'shio'));
+        }
+
+        function setupEventListeners() {
+            window.addEventListener('resize', resizeCanvas);
+            canvas.addEventListener('click', handleCanvasClick);
+            
+            canvas.addEventListener('mousemove', handleCanvasMouseMove);
+            canvas.addEventListener('mousedown', handleCanvasMouseDown);
+            canvas.addEventListener('mouseup', handleCanvasMouseUp);
+            canvas.addEventListener('mouseleave', handleCanvasMouseUp);
+            
+            canvas.addEventListener('touchmove', handleCanvasMouseMove, { passive: false });
+            canvas.addEventListener('touchstart', handleCanvasMouseDown, { passive: false });
+            canvas.addEventListener('touchend', handleCanvasMouseUp, { passive: false });
+            
+            minimapCanvas.addEventListener('click', handleMinimapClick);
+
+            document.getElementById('btn-end-turn').addEventListener('click', handleEndTurn);
+            document.getElementById('btn-units').addEventListener('click', showUnitsModal);
+            document.getElementById('btn-terrain').addEventListener('click', showTerrainModal);
+            document.getElementById('close-unit-modal').addEventListener('click', () => unitListModal.classList.add('hidden'));
+            document.getElementById('close-terrain-modal').addEventListener('click', () => terrainInfoModal.classList.add('hidden'));
+            
+            document.getElementById('btn-search').addEventListener('click', handleSearch);
+            document.getElementById('btn-invade').addEventListener('click', handleInvade);
+            closeMessageModalBtn.addEventListener('click', () => messageModal.classList.add('hidden'));
+
+            restartButton.addEventListener('click', startGame);
+        }
+
+        function handleCanvasClick(e) {
+            if (currentTurn !== 'player' || gameState !== 'IDLE' || hasDragged) return;
+
+            const { x, y } = getCanvasCoords(e);
+            if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return;
+            
+            const targetUnit = units.find(u => u.x === x && u.y === y);
+
+            if (selectedUnit) {
+                const isMovable = moveHighlights.some(t => t.x === x && t.y === y);
+                const isAttackable = attackHighlights.some(t => t.x === x && t.y === y);
+
+                if (isAttackable && targetUnit && targetUnit.owner === 'enemy') {
+                    handleAttack(selectedUnit, targetUnit);
+                } else if (isMovable && !targetUnit) {
+                    selectedUnit.x = x;
+                    selectedUnit.y = y; // <<<<< FIX: Y座標の更新を追加
+                    
+                    moveHighlights = []; 
+                    calculateAttackRange(selectedUnit);
+                    
+                    centerCameraOn(x, y);
+                    updateUI();
+                } else if (targetUnit && targetUnit === selectedUnit) {
+                    selectedUnit.moved = true;
+                    deselectUnit();
+                } else if (targetUnit && targetUnit.owner === 'player' && !targetUnit.moved) {
+                    if (!selectedUnit.moved) { // 現在のユニットが未行動なら行動済みにする
+                        selectedUnit.moved = true;
+                    }
+                    selectUnit(targetUnit);
+                } else {
+                     if (!selectedUnit.moved) {
+                         selectedUnit.moved = true;
+                     }
+                     deselectUnit();
+                }
+            } else {
+                if (targetUnit && targetUnit.owner === 'player' && !targetUnit.moved) {
+                    selectUnit(targetUnit);
+                }
+            }
+            updateInfoPanel(targetUnit, mapData[y] ? mapData[y][x] : null); 
+        }
+        
+        function handleAttack(attacker, defender) {
+            gameState = 'ANIMATING';
+            invasionCount = 0;
+            
+            const terrain = mapData[defender.y][defender.x];
+            const attackRoll = attacker.attack + Math.floor(Math.random() * 5) - 2; 
+            const totalDefense = defender.defense + terrain.defense;
+            const damage = Math.max(1, attackRoll - totalDefense);
+
+            showAttackAnimation(attacker, defender, damage);
+
+            setTimeout(() => {
+                defender.hp -= damage;
+                
+                if (damage > 0) {
+                    const dx = defender.x - attacker.x;
+                    const dy = defender.y - attacker.y;
+                    let knockbackX = defender.x;
+                    let knockbackY = defender.y;
+                    
+                    if (Math.abs(dx) > Math.abs(dy)) {
+                        knockbackX += Math.sign(dx);
+                    } else if (Math.abs(dy) > 0) {
+                        knockbackY += Math.sign(dy);
+                    }
+                    
+                    if (knockbackX >= 0 && knockbackX < MAP_WIDTH && knockbackY >= 0 && knockbackY < MAP_HEIGHT) { 
+                        const targetTile = mapData[knockbackY][knockbackX];
+                        const unitAtNewPos = units.find(u => u.x === knockbackX && u.y === knockbackY);
+                        if (!unitAtNewPos && targetTile.moveCost < 99) {
+                            defender.x = knockbackX;
+                            defender.y = knockbackY;
+                        }
+                    }
+                }
+
+                if (defender.hp <= 0) {
+                    units = units.filter(u => u.id !== defender.id);
+                }
+                attacker.moved = true;
+                deselectUnit();
+                checkVictoryCondition();
+                gameState = 'IDLE';
+                updateUI();
+            }, 1500);
+        }
+
+        function showAttackAnimation(attacker, defender, damage) {
+            const setSprite = (element, unit, isAttacker) => {
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCanvas.width = TILE_SPRITE_SIZE;
+                tempCanvas.height = TILE_SPRITE_SIZE;
+                const sx = (unit.spriteIndex % SPRITE_GRID_SIZE) * TILE_SPRITE_SIZE;
+                const sy = Math.floor(unit.spriteIndex / SPRITE_GRID_SIZE) * TILE_SPRITE_SIZE;
+                
+                if (images.ramen && images.ramen.complete) {
+                    tempCtx.drawImage(images.ramen, sx, sy, TILE_SPRITE_SIZE, TILE_SPRITE_SIZE, 0, 0, TILE_SPRITE_SIZE, TILE_SPRITE_SIZE);
+                }
+
+                tempCtx.strokeStyle = isAttacker ? '#3b82f6' : '#ef4444';
+                tempCtx.lineWidth = 12; // 枠を太く
+                tempCtx.strokeRect(6, 6, TILE_SPRITE_SIZE - 12, TILE_SPRITE_SIZE - 12);
+
+                element.style.backgroundImage = `url(${tempCanvas.toDataURL()})`;
+            };
+            
+            setSprite(attackerSpriteDiv, attacker, true);
+            setSprite(defenderSpriteDiv, defender, false);
+            damageIndicator.textContent = `-${damage}-`;
+
+            attackerSpriteDiv.className = attackerSpriteDiv.className.replace(/ animating-attack/g, '');
+            defenderSpriteDiv.className = defenderSpriteDiv.className.replace(/ animating-defense/g, '');
+            damageIndicator.className = damageIndicator.className.replace(/ animate-damagePopup/g, '');
+            
+            attackAnimOverlay.classList.remove('hidden');
+            attackAnimOverlay.classList.add('flex');
+
+            void attackerSpriteDiv.offsetWidth;
+            void defenderSpriteDiv.offsetWidth;
+
+            attackerSpriteDiv.classList.add('animating-attack');
+            defenderSpriteDiv.classList.add('animating-defense');
+            
+            setTimeout(() => damageIndicator.classList.add('animate-damagePopup'), 500);
+            
+            setTimeout(() => {
+                attackAnimOverlay.classList.add('hidden');
+                attackAnimOverlay.classList.remove('flex');
+            }, 1500);
+        }
+
+        function handleSearch() {
+            if (!selectedUnit || selectedUnit.moved) return;
+            const currentTile = mapData[selectedUnit.y][selectedUnit.x];
+            if (currentTile.name !== '都市' || currentTile.isCapital) return;
+
+            if (Math.random() < 0.5) {
+                const healAmount = 5;
+                selectedUnit.hp = Math.min(selectedUnit.maxHp, selectedUnit.hp + healAmount);
+                showMessageModal(`捜索成功！<br>HPが ${healAmount} 回復！`, 'text-green-400');
+            } else {
+                showMessageModal('何も見つからなかった...', 'text-gray-400');
+            }
+            selectedUnit.moved = true; 
+            deselectUnit();
+            updateUI();
+        }
+
+        function handleInvade() {
+            if (!selectedUnit || selectedUnit.moved) return;
+            const currentTile = mapData[selectedUnit.y][selectedUnit.x];
+            if (selectedUnit.x === ENEMY_CAPITAL.x && selectedUnit.y === ENEMY_CAPITAL.y && currentTile.isCapital) {
+                invasionCount++;
+                if (invasionCount >= 3) {
+                    endGame('侵略成功！完全勝利！');
+                    return;
+                }
+                showMessageModal(`侵略続行中... (${invasionCount}/3)<br>このマスに留まりターン終了してください。`, 'text-orange-400');
+                selectedUnit.moved = true; 
+                deselectUnit();
+                updateUI();
+            }
+        }
+        
+        function handleEndTurn() {
+            if (currentTurn !== 'player' || gameState === 'ANIMATING') return;
+            // ターン終了時に選択中のユニットがいれば、そのユニットの行動を確定
+            if(selectedUnit && !selectedUnit.moved) {
+                selectedUnit.moved = true;
+            }
+
+            const unitOnCapital = units.find(u => u.owner === 'player' && u.x === ENEMY_CAPITAL.x && u.y === ENEMY_CAPITAL.y);
+            if (!unitOnCapital && invasionCount > 0) {
+                invasionCount = 0;
+                showMessageModal('首都から離れたため、侵略カウンターがリセットされました。', 'text-red-400');
+            }
+            currentTurn = 'enemy';
+            deselectUnit();
+            updateUI();
+            setTimeout(runEnemyAI, 500);
+        }
+
+        function runEnemyAI() {
+            const enemyUnits = units.filter(u => u.owner === 'enemy' && u.hp > 0);
+            let i = 0;
+            const processNextUnit = () => {
+                if (i >= enemyUnits.length || gameState === 'GAMEOVER') {
+                    endEnemyTurn();
+                    return;
+                }
+                const unit = enemyUnits[i];
+                const playerUnits = units.filter(u => u.owner === 'player' && u.hp > 0);
+                if (playerUnits.length > 0) {
+                    let closestTarget = playerUnits[0];
+                    let minDistance = Infinity;
+                    playerUnits.forEach(p => {
+                        const d = Math.abs(p.x - unit.x) + Math.abs(p.y - unit.y);
+                        if (d < minDistance) {
+                            minDistance = d;
+                            closestTarget = p;
+                        }
+                    });
+
+                    const dist = Math.abs(closestTarget.x - unit.x) + Math.abs(closestTarget.y - unit.y);
+                    if (dist <= unit.attackRange) {
+                        handleAttack(unit, closestTarget);
+                    } else {
+                        const dx = closestTarget.x - unit.x;
+                        const dy = closestTarget.y - unit.y;
+                        let moveX = unit.x, moveY = unit.y;
+                        if (Math.abs(dx) > Math.abs(dy)) {
+                            moveX += Math.sign(dx);
+                        } else if (Math.abs(dy) > 0) {
+                            moveY += Math.sign(dy);
+                        }
+                        if(moveX >= 0 && moveX < MAP_WIDTH && moveY >= 0 && moveY < MAP_HEIGHT) {
+                            const targetTile = mapData[moveY][moveX];
+                            if(!units.find(u => u.x === moveX && u.y === moveY) && targetTile.moveCost < 99) {
+                                unit.x = moveX;
+                                unit.y = moveY;
+                            }
+                        }
+                        unit.moved = true;
+                        setTimeout(() => { i++; processNextUnit(); }, 50); 
+                        return;
+                    }
+                } else {
+                    unit.moved = true;
+                }
+                setTimeout(() => { i++; processNextUnit(); }, 1600); 
+            };
+            processNextUnit();
+        }
+
+        function endEnemyTurn() {
+            if (gameState === 'GAMEOVER') return;
+            units.forEach(u => u.moved = false);
+            currentTurn = 'player';
+            updateUI();
+        }
+
+        function showMessageModal(message, colorClass = 'text-white') {
+            const content = document.getElementById('message-content');
+            content.className = `${colorClass} text-lg font-semibold`;
+            content.innerHTML = message;
+            messageModal.classList.remove('hidden');
+        }
+
+        function showUnitsModal() {
+            const content = document.getElementById('unit-list-content');
+            content.innerHTML = '<h4 class="text-md font-bold mb-2">味方ユニット</h4>';
+            units.filter(u => u.owner === 'player').forEach(u => {
+                content.innerHTML += `<div class="p-2 my-1 border-b border-gray-700">
+                    <span class="font-bold text-lg">[${u.displayId}]</span> <span class="font-semibold">${u.name}</span> - HP: ${u.hp}/${u.maxHp} (行動済: ${u.moved ? 'はい' : 'いいえ'})
+                </div>`;
+            });
+
+            content.innerHTML += '<h4 class="text-md font-bold mt-4 mb-2">敵ユニット</h4>';
+            units.filter(u => u.owner === 'enemy').forEach(u => {
+                content.innerHTML += `<div class="p-2 my-1 border-b border-gray-700">
+                     <span class="font-bold text-lg">[${u.displayId}]</span> <span class="font-semibold">${u.name}</span> - HP: ${u.hp}/${u.maxHp}
+                </div>`;
+            });
+            unitListModal.classList.remove('hidden');
+        }
+
+        function showTerrainModal() {
+            const content = document.getElementById('terrain-list-content');
+            content.innerHTML = '<h4 class="text-md font-bold mb-2">地形効果一覧</h4>';
+            Object.values(TERRAIN_TYPES).forEach(t => {
+                content.innerHTML += `<div class="p-2 my-1 border-b border-gray-700">
+                    <span class="font-semibold">${t.name}</span><br>
+                    防御効果: +${t.defense}, 移動コスト: ${t.moveCost}
+                </div>`;
+            });
+            terrainInfoModal.classList.remove('hidden');
+        }
+
+        function updateUI() {
+            const endTurnBtn = document.getElementById('btn-end-turn');
+            const searchBtn = document.getElementById('btn-search');
+            const invadeBtn = document.getElementById('btn-invade');
+            
+            invadeBtn.textContent = `侵略 (${invasionCount}/3)`;
+            invadeBtn.disabled = true;
+            searchBtn.disabled = true;
+
+            if (currentTurn === 'player' && gameState === 'IDLE') {
+                endTurnBtn.disabled = false;
+                
+                if (selectedUnit && !selectedUnit.moved) {
+                    const currentTile = mapData[selectedUnit.y][selectedUnit.x];
+                    if (currentTile.name === '都市' && !currentTile.isCapital) {
+                        searchBtn.disabled = false;
+                    }
+                    if (currentTile.isCapital) {
+                        invadeBtn.disabled = false;
+                    }
+                }
+            } else {
+                endTurnBtn.disabled = true;
+            }
+        }
+        
+        function updateInfoPanel(hoverUnit = null, hoverTerrain = null) {
+            const turnText = `<b class="${currentTurn === 'player' ? 'text-blue-400' : 'text-red-400'}">${currentTurn === 'player' ? 'プレイヤー' : 'エネミー'}のターン</b>`;
+            const unit = selectedUnit || hoverUnit;
+            const terrain = hoverTerrain || (selectedUnit ? mapData[selectedUnit.y][selectedUnit.x] : null);
+
+            if (unit) {
+                unitInfoDiv.innerHTML = `${turnText}<br><b>[${unit.displayId}] ${unit.name}</b><br>HP: ${unit.hp}/${unit.maxHp} | ATK: ${unit.attack} | DEF: ${unit.defense}`;
+            } else {
+                 unitInfoDiv.innerHTML = turnText;
+            }
+
+            if(terrain) {
+                const capitalText = terrain.isCapital ? ' (首都)' : '';
+                terrainInfoDiv.innerHTML = `<b>地形: ${terrain.name}${capitalText}</b><br>防御効果: +${terrain.defense}<br>移動コスト: ${terrain.moveCost}`;
+            } else {
+                terrainInfoDiv.innerHTML = '';
+            }
+        }
+        
+        function checkVictoryCondition() {
+            const playerUnits = units.some(u => u.owner === 'player' && u.hp > 0);
+            const enemyUnits = units.some(u => u.owner === 'enemy' && u.hp > 0);
+
+            if (!playerUnits) {
+                endGame('全滅... プレイヤーの敗北です。');
+            } else if (!enemyUnits) {
+                endGame('敵ユニット全滅！プレイヤーの勝利！');
+            }
+        }
+        
+        function endGame(message) {
+            gameState = 'GAMEOVER';
+            victoryText.textContent = message;
+            victoryModal.classList.remove('hidden');
+            setTimeout(() => {
+                victoryModal.classList.remove('opacity-0');
+            }, 50);
+        }
+
+        function selectUnit(unit) {
+            selectedUnit = unit;
+            if (!unit.moved) {
+                calculateMoveRange(unit);
+            }
+            calculateAttackRange(unit);
+            centerCameraOn(unit.x, unit.y);
+            updateInfoPanel();
+            updateUI();
+        }
+
+        function deselectUnit() {
+            selectedUnit = null;
+            moveHighlights = [];
+            attackHighlights = [];
+            updateInfoPanel();
+            updateUI();
+        }
+
+        function calculateMoveRange(unit) {
+            moveHighlights = [];
+            const queue = [{ x: unit.x, y: unit.y, cost: 0 }];
+            const visited = new Map();
+            visited.set(`${unit.x},${unit.y}`, 0);
+
+            while (queue.length > 0) {
+                const { x, y, cost } = queue.shift();
+                const neighbors = [ { dx: 1, dy: 0 }, { dx: -1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 0, dy: -1 }];
+                neighbors.forEach(({ dx, dy }) => {
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT) {
+                        const tile = mapData[ny][nx];
+                        const moveCost = tile.moveCost;
+                        const newCost = cost + moveCost;
+                        const posKey = `${nx},${ny}`;
+                        const unitAtNewPos = units.find(u => u.x === nx && u.y === ny);
+                        if (newCost <= unit.moveRange && moveCost < 99 && (!unitAtNewPos || unitAtNewPos.owner === unit.owner)) { //味方の上は通過可能
+                            if (!visited.has(posKey) || newCost < visited.get(posKey)) {
+                                visited.set(posKey, newCost);
+                                if (!unitAtNewPos) moveHighlights.push({ x: nx, y: ny }); // ユニットがいないマスのみ移動先
+                                queue.push({ x: nx, y: ny, cost: newCost });
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        function calculateAttackRange(unit) {
+            attackHighlights = [];
+            for (let y = 0; y < MAP_HEIGHT; y++) {
+                for (let x = 0; x < MAP_WIDTH; x++) {
+                    const distance = Math.abs(x - unit.x) + Math.abs(y - unit.y);
+                    if (distance > 0 && distance <= unit.attackRange) {
+                        const targetUnit = units.find(u => u.x === x && u.y === y && u.owner !== unit.owner);
+                        if (targetUnit) {
+                            attackHighlights.push({ x: x, y: y });
+                        }
+                    }
+                }
+            }
+        }
+
+        function gameLoop() {
+            if (gameState === 'GAMEOVER') return;
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.translate(-camera.x, -camera.y);
+
+            drawMap();
+            drawMoveHighlights();
+            drawAttackHighlights();
+            drawUnits();
+            drawSelection();
+
+            ctx.restore();
+            drawMinimap();
+        }
+
+        function drawMap() {
+            for (let y = 0; y < MAP_HEIGHT; y++) {
+                for (let x = 0; x < MAP_WIDTH; x++) {
+                    const tile = mapData[y][x];
+                    const spriteSheet = images[tile.sheet];
+                    const sx = (tile.index % SPRITE_GRID_SIZE) * TILE_SPRITE_SIZE;
+                    const sy = Math.floor(tile.index / SPRITE_GRID_SIZE) * TILE_SPRITE_SIZE;
+
+                    if (spriteSheet && spriteSheet.complete) {
+                        ctx.drawImage(spriteSheet, sx, sy, TILE_SPRITE_SIZE, TILE_SPRITE_SIZE, x * tileSize, y * tileSize, tileSize, tileSize);
+                    } else {
+                        ctx.fillStyle = tile.name === '海' ? '#3b82f6' : tile.name === '都市' ? '#fde047' : '#10b981';
+                        ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+                    }
+                    if (tile.isCapital) {
+                        ctx.fillStyle = 'rgba(255, 223, 0, 0.5)';
+                        ctx.font = `bold ${tileSize*0.8}px sans-serif`;
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText('★', x * tileSize + tileSize / 2, y * tileSize + tileSize / 2);
+                    }
+                }
+            }
+        }
+
+        function drawMinimap() {
+            const m_size = 100;
+            minimapCanvas.width = m_size;
+            minimapCanvas.height = m_size;
+            const m_tileSize = m_size / MAP_WIDTH;
+            m_ctx.clearRect(0, 0, m_size, m_size);
+            
+            for (let y = 0; y < MAP_HEIGHT; y++) {
+                for (let x = 0; x < MAP_WIDTH; x++) {
+                    const tile = mapData[y][x];
+                    m_ctx.fillStyle = tile.name === '海' ? '#3b82f6' : tile.name === '都市' ? '#fde047' : '#10b981';
+                    m_ctx.fillRect(x * m_tileSize, y * m_tileSize, m_tileSize, m_tileSize);
+                    if (tile.isCapital) {
+                         m_ctx.fillStyle = 'rgba(255, 0, 0, 0.8)';
+                         m_ctx.fillRect(x * m_tileSize + 1, y * m_tileSize + 1, m_tileSize - 2, m_tileSize - 2);
+                    }
+                }
+            }
+
+            units.forEach(unit => {
+                m_ctx.fillStyle = unit.owner === 'player' ? '#1d4ed8' : '#b91c1c';
+                m_ctx.fillRect(unit.x * m_tileSize, unit.y * m_tileSize, m_tileSize, m_tileSize);
+            });
+
+            const mapW = MAP_WIDTH * tileSize;
+            const mapH = MAP_HEIGHT * tileSize;
+            const viewX = camera.x / mapW * m_size;
+            const viewY = camera.y / mapH * m_size;
+            const viewW = canvas.width / mapW * m_size;
+            const viewH = canvas.height / mapH * m_size;
+
+            m_ctx.strokeStyle = '#fff';
+            m_ctx.lineWidth = 1;
+            m_ctx.strokeRect(viewX, viewY, viewW, viewH);
+        }
+
+        function drawMoveHighlights() {
+            ctx.fillStyle = 'rgba(59, 130, 246, 0.4)';
+            moveHighlights.forEach(p => {
+                ctx.fillRect(p.x * tileSize, p.y * tileSize, tileSize, tileSize);
+            });
+        }
+
+        function drawAttackHighlights() {
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.4)';
+            attackHighlights.forEach(p => {
+                ctx.fillRect(p.x * tileSize, p.y * tileSize, tileSize, tileSize);
+            });
+        }
+
+        function drawUnits() {
+            units.forEach(unit => {
+                ctx.save();
+                if (unit.moved && currentTurn === 'player') ctx.globalAlpha = 0.6;
+                const sx = (unit.spriteIndex % SPRITE_GRID_SIZE) * TILE_SPRITE_SIZE;
+                const sy = Math.floor(unit.spriteIndex / SPRITE_GRID_SIZE) * TILE_SPRITE_SIZE;
+                
+                if (images.ramen && images.ramen.complete) {
+                    ctx.drawImage(images.ramen, sx, sy, TILE_SPRITE_SIZE, TILE_SPRITE_SIZE, unit.x * tileSize, unit.y * tileSize, tileSize, tileSize);
+                } else {
+                    ctx.fillStyle = unit.owner === 'player' ? '#3b82f6' : '#ef4444';
+                    ctx.fillRect(unit.x * tileSize, unit.y * tileSize, tileSize, tileSize);
+                }
+                
+                const hpRatio = unit.hp / unit.maxHp;
+                ctx.fillStyle = hpRatio > 0.6 ? '#22c55e' : hpRatio > 0.3 ? '#facc15' : '#ef4444';
+                ctx.fillRect(unit.x * tileSize, unit.y * tileSize + tileSize - 6, tileSize * hpRatio, 4);
+                ctx.strokeStyle = '#1f2937';
+                ctx.strokeRect(unit.x * tileSize, unit.y * tileSize + tileSize - 6, tileSize, 4);
+
+                ctx.strokeStyle = unit.owner === 'player' ? '#3b82f6' : '#ef4444';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(unit.x * tileSize + 1, unit.y * tileSize + 1, tileSize - 2, tileSize - 2);
+                
+                // ユニット番号を描画
+                ctx.font = `bold ${tileSize / 4}px sans-serif`;
+                ctx.textAlign = 'right';
+                ctx.textBaseline = 'bottom';
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 2;
+                ctx.strokeText(unit.displayId, unit.x * tileSize + tileSize - 4, unit.y * tileSize + tileSize - 8);
+                ctx.fillStyle = 'white';
+                ctx.fillText(unit.displayId, unit.x * tileSize + tileSize - 4, unit.y * tileSize + tileSize - 8);
+
+                ctx.restore();
+            });
+        }
+        
+        function drawSelection() {
+            if (selectedUnit) {
+                ctx.strokeStyle = '#facc15';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(selectedUnit.x * tileSize + 2, selectedUnit.y * tileSize + 2, tileSize - 4, tileSize - 4);
+            }
+        }
+        
+        function resizeCanvas() {
+            const screenRect = gameScreen.getBoundingClientRect();
+            canvas.width = screenRect.width;
+            canvas.height = screenRect.height;
+            
+            tileSize = Math.min(canvas.width / MAP_WIDTH, canvas.height / MAP_HEIGHT, 96);
+
+            const currentMapWidth = MAP_WIDTH * tileSize;
+            const currentMapHeight = MAP_HEIGHT * tileSize;
+            
+            cameraBounds.maxX = currentMapWidth - canvas.width;
+            cameraBounds.maxY = currentMapHeight - canvas.height;
+            cameraBounds.maxX = Math.max(0, cameraBounds.maxX);
+            cameraBounds.maxY = Math.max(0, cameraBounds.maxY);
+
+            if (selectedUnit) {
+                centerCameraOn(selectedUnit.x, selectedUnit.y);
+            } else {
+                camera.x = Math.max(0, (currentMapWidth - canvas.width) / 2);
+                camera.y = Math.max(0, (currentMapHeight - canvas.height) / 2);
+            }
+        }
+        
+        function centerCameraOn(mapX, mapY) {
+            camera.x = mapX * tileSize - (canvas.width / 2) + (tileSize / 2);
+            camera.y = mapY * tileSize - (canvas.height / 2) + (tileSize / 2);
+            camera.x = Math.max(0, Math.min(camera.x, cameraBounds.maxX));
+            camera.y = Math.max(0, Math.min(camera.y, cameraBounds.maxY));
+        }
+
+        function handleCanvasMouseMove(e) {
+            e.preventDefault();
+            const clientX = e.clientX || (e.touches ? e.touches[0].clientX : 0);
+            const clientY = e.clientY || (e.touches ? e.touches[0].clientY : 0);
+            
+            if (isDragging) {
+                hasDragged = true;
+                const dx = clientX - lastMouseX;
+                const dy = clientY - lastMouseY;
+                camera.x = Math.max(0, Math.min(camera.x - dx, cameraBounds.maxX));
+                camera.y = Math.max(0, Math.min(camera.y - dy, cameraBounds.maxY));
+                lastMouseX = clientX;
+                lastMouseY = clientY;
+            } else if (gameState === 'IDLE') {
+                const { x, y } = getCanvasCoords(e);
+                if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) {
+                    const targetUnit = units.find(u => u.x === x && u.y === y);
+                    const targetTerrain = mapData[y][x];
+                    updateInfoPanel(targetUnit, targetTerrain);
+                }
+            }
+        }
+
+        function handleCanvasMouseDown(e) {
+            e.preventDefault();
+            isDragging = true;
+            hasDragged = false;
+            lastMouseX = e.clientX || (e.touches ? e.touches[0].clientX : 0);
+            lastMouseY = e.clientY || (e.touches ? e.touches[0].clientY : 0);
+        }
+
+        function handleCanvasMouseUp(e) {
+            isDragging = false;
+        }
+
+        function getCanvasCoords(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.clientX || (e.changedTouches ? e.changedTouches[0].clientX : 0);
+            const clientY = e.clientY || (e.changedTouches ? e.changedTouches[0].clientY : 0);
+
+            const rawX = clientX - rect.left + camera.x;
+            const rawY = clientY - rect.top + camera.y;
+
+            const mapX = Math.floor(rawX / tileSize);
+            const mapY = Math.floor(rawY / tileSize);
+            
+            return { x: mapX, y: mapY };
+        }
+
+        function handleMinimapClick(e) {
+             const rect = minimapCanvas.getBoundingClientRect();
+             const x = e.clientX - rect.left;
+             const y = e.clientY - rect.top;
+             const mapX = Math.floor(x / (rect.width / MAP_WIDTH));
+             const mapY = Math.floor(y / (rect.height / MAP_HEIGHT));
+             centerCameraOn(mapX, mapY);
+        }
+
+        window.onload = function() {
+             init();
+        }
+
+    </script>
+</body>
+</html>
+
