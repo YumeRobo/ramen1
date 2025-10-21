@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>ラーメン大戦略 (v3)</title>
+    <title>ラーメン大戦略 (v4)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
@@ -47,9 +47,12 @@
             50% { transform: translateX(10%); }
             100% { transform: translateX(0); }
         }
-        @keyframes defender-knockback {
+        @keyframes defender-shake {
             0% { transform: translateX(0); }
-            70% { transform: translateX(20%); }
+            20% { transform: translateX(-5%); }
+            40% { transform: translateX(5%); }
+            60% { transform: translateX(-5%); }
+            80% { transform: translateX(5%); }
             100% { transform: translateX(0); }
         }
         @keyframes damagePopup {
@@ -59,7 +62,8 @@
         }
         
         .animating-attack { animation: attacker-charge 0.5s ease-in-out forwards; }
-        .animating-defense { animation: defender-knockback 1s ease-out forwards; }
+        /* ノックバックをシェイクに変更 */
+        .animating-defense { animation: defender-shake 0.5s ease-out forwards; } 
         .animate-damagePopup { animation: damagePopup 1.5s ease-in-out forwards; }
     </style>
 </head>
@@ -206,6 +210,8 @@
             road: { name: '道', sheet: 'terrain1', index: 2, moveCost: 1, defense: 0 },
             water: { name: '海', sheet: 'terrain1', index: 13, moveCost: 99, defense: 0 },
             city: { name: '都市', sheet: 'terrain2', index: 5, moveCost: 1, defense: 2, isCapital: false },
+            // Stage 3から導入する通りにくい地形
+            mire: { name: '沼地', sheet: 'terrain2', index: 15, moveCost: 4, defense: 2 }, 
         };
 
         const UNIT_TYPES = {
@@ -213,6 +219,8 @@
             miso: { name: '味噌ラーメン', spriteIndex: 2, maxHp: 25, attack: 7, defense: 3, moveRange: 3, attackRange: 1 },
             tonkotsu: { name: '豚骨ラーメン', spriteIndex: 3, maxHp: 18, attack: 9, defense: 1, moveRange: 5, attackRange: 1 },
             shio: { name: '塩ラーメン', spriteIndex: 7, maxHp: 15, attack: 6, defense: 1, moveRange: 4, attackRange: 2 },
+            // Stage 2から導入する敵の間接攻撃ユニット
+            karamiso: { name: '辛味噌ラーメン', spriteIndex: 6, maxHp: 16, attack: 7, defense: 1, moveRange: 3, attackRange: 3 }, 
         };
 
         // --- ゲーム状態変数 ---
@@ -228,11 +236,11 @@
         
         // --- ステージ設定 ---
         const STAGES = [
-            { stage: 1, width: 10, height: 10, units: [{p: [[1,1,'shoyu'],[2,1,'miso']], e: [[8,8,'tonkotsu'], [7,8,'shio']] }]},
-            { stage: 2, width: 12, height: 12, units: [{p: [[1,1,'shoyu'],[2,1,'miso'], [1,2,'shio']], e: [[10,10,'tonkotsu'], [9,10,'miso'], [10,9,'tonkotsu']] }]},
-            { stage: 3, width: 15, height: 15, units: [{p: [[1,1,'shoyu'],[2,1,'miso'], [1,2,'shio'], [2,2,'shoyu']], e: [[13,13,'tonkotsu'], [12,13,'miso'], [13,12,'tonkotsu'], [12,12,'shio']] }]},
-            { stage: 4, width: 18, height: 18, units: [{p: [[1,1,'shoyu'],[2,1,'miso'],[3,1,'shio'], [1,2,'shoyu'], [2,2,'miso']], e: [[16,16,'tonkotsu'],[15,16,'miso'],[16,15,'tonkotsu'],[15,15,'shio'],[14,16,'miso']] }]},
-            { stage: 5, width: 20, height: 20, units: [{p: [[1,1,'shoyu'],[2,1,'miso'],[3,1,'shio'],[1,2,'shoyu'],[2,2,'miso'],[3,2,'shio']], e: [[18,18,'tonkotsu'],[17,18,'miso'],[18,17,'tonkotsu'],[17,17,'shio'],[16,18,'miso'],[18,16,'shoyu']] }]},
+            { stage: 1, width: 10, height: 10, units: { p: [[1,1,'shoyu'],[2,1,'miso']], e: [[8,8,'tonkotsu'], [7,8,'shio']] }},
+            { stage: 2, width: 12, height: 12, units: { p: [[1,1,'shoyu'],[2,1,'miso'], [1,2,'shio']], e: [[10,10,'tonkotsu'], [9,10,'miso'], [10,9,'karamiso']] }}, // 敵に間接攻撃ユニット追加
+            { stage: 3, width: 15, height: 15, units: { p: [[1,1,'shoyu'],[2,1,'miso'], [1,2,'shio'], [2,2,'shoyu']], e: [[13,13,'tonkotsu'], [12,13,'karamiso'], [13,12,'tonkotsu'], [12,12,'shio']] }}, // 地形難易度アップ
+            { stage: 4, width: 18, height: 18, units: { p: [[1,1,'shoyu'],[2,1,'miso'],[3,1,'shio'], [1,2,'shoyu'], [2,2,'miso']], e: [[16,16,'tonkotsu'],[15,16,'miso'],[16,15,'karamiso'],[15,15,'shio'],[14,16,'miso']] }},
+            { stage: 5, width: 20, height: 20, units: { p: [[1,1,'shoyu'],[2,1,'miso'],[3,1,'shio'],[1,2,'shoyu'],[2,2,'miso'],[3,2,'shio']], e: [[18,18,'tonkotsu'],[17,18,'karamiso'],[18,17,'tonkotsu'],[17,17,'shio'],[16,18,'miso'],[18,16,'shoyu']] }},
         ];
 
 
@@ -315,7 +323,7 @@
             attackHighlights = [];
             invasionCount = 0;
             generateMap();
-            generateUnits(stageConfig.units[0]);
+            generateUnits(stageConfig.units);
             resizeCanvas(); 
             setupEventListeners();
             updateUI();
@@ -326,12 +334,25 @@
             mapData = Array.from({ length: MAP_HEIGHT }, (_, y) => Array.from({ length: MAP_WIDTH }, (_, x) => {
                 const r = Math.random();
                 let tileType;
-                if (r < 0.5) tileType = 'plain';
-                else if (r < 0.7) tileType = 'forest';
-                else if (r < 0.8) tileType = 'mountain';
-                else if (r < 0.9) tileType = 'road';
-                else tileType = 'city';
+                
+                if (currentStage < 3) {
+                    // Stage 1 & 2: Mireなし
+                    if (r < 0.5) tileType = 'plain';
+                    else if (r < 0.7) tileType = 'forest';
+                    else if (r < 0.8) tileType = 'mountain';
+                    else if (r < 0.9) tileType = 'road';
+                    else tileType = 'city';
+                } else {
+                    // Stage 3+: Mire (沼地)を導入
+                    if (r < 0.4) tileType = 'plain';
+                    else if (r < 0.6) tileType = 'forest';
+                    else if (r < 0.7) tileType = 'mountain';
+                    else if (r < 0.75) tileType = 'mire'; // 沼地
+                    else if (r < 0.85) tileType = 'road';
+                    else tileType = 'city';
+                }
 
+                // 初期配置エリアは平地にする
                 if (x < 3 && y < 3) tileType = 'plain';
                 
                 return { ...TERRAIN_TYPES[tileType] };
@@ -385,12 +406,9 @@
             if (currentTurn !== 'player' || gameState !== 'IDLE') return; 
 
             const { x, y } = getCanvasCoords(e);
+            
+            // マップ外なら何もしない (カメラ移動後の操作の場合は無視)
             if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) {
-                if(selectedUnit) {
-                    selectedUnit.moved = true;
-                    deselectUnit();
-                    checkAutoEndTurn();
-                }
                 return;
             };
             
@@ -401,33 +419,40 @@
                 const isAttackable = attackHighlights.some(t => t.x === x && t.y === y);
 
                 if (isAttackable && targetUnit && targetUnit.owner === 'enemy') {
+                    // 1. 攻撃実行
                     handleAttack(selectedUnit, targetUnit);
                 } else if (isMovable && !targetUnit) {
+                    // 2. 移動実行 (移動後も選択状態を維持し、攻撃範囲を表示)
                     selectedUnit.x = x;
                     selectedUnit.y = y;
                     
                     moveHighlights = []; 
-                    calculateAttackRange(selectedUnit);
+                    calculateAttackRange(selectedUnit); // 攻撃範囲のみを再計算
                     
                     centerCameraOn(x, y);
                     updateUI();
+                    // DO NOT set moved = true here.
                 } else if (targetUnit && targetUnit === selectedUnit) {
+                    // 3. 自身をタップ: 待機（行動終了）
                     selectedUnit.moved = true;
                     deselectUnit();
                     checkAutoEndTurn();
-                } else if (targetUnit && targetUnit.owner === 'player' && !targetUnit.moved) {
-                     if (selectedUnit && !selectedUnit.moved) {
-                        // 何もしない、ただ選択を切り替えるだけ
-                     }
-                    selectUnit(targetUnit);
                 } else {
-                     if (selectedUnit && !selectedUnit.moved) {
-                         selectedUnit.moved = true;
-                     }
-                     deselectUnit();
-                     checkAutoEndTurn();
+                    // 4. 無効な場所/別のユニットをタップ: 
+                    //    a) 現在のユニットの行動を終了させる
+                    if (!selectedUnit.moved) {
+                         selectedUnit.moved = true; 
+                    }
+                    deselectUnit();
+                    
+                    //    b) 新しいターゲットがプレイヤーユニットで未行動なら選択
+                    if (targetUnit && targetUnit.owner === 'player' && !targetUnit.moved) {
+                        selectUnit(targetUnit);
+                    }
+                    checkAutoEndTurn();
                 }
             } else {
+                // ユニット未選択時: 未行動のプレイヤーユニットなら選択
                 if (targetUnit && targetUnit.owner === 'player' && !targetUnit.moved) {
                     selectUnit(targetUnit);
                 }
@@ -440,6 +465,7 @@
             invasionCount = 0;
             
             const terrain = mapData[defender.y][defender.x];
+            // 攻撃乱数: ATK +/- 2
             const attackRoll = attacker.attack + Math.floor(Math.random() * 5) - 2; 
             const totalDefense = defender.defense + terrain.defense;
             const damage = Math.max(1, attackRoll - totalDefense);
@@ -449,12 +475,12 @@
             setTimeout(() => {
                 defender.hp -= damage;
                 
-                // ノックバック処理を削除
+                // 攻撃後のノックバック削除済み (アニメーションをシェイクに変更)
                 
                 if (defender.hp <= 0) {
                     units = units.filter(u => u.id !== defender.id);
                 }
-                attacker.moved = true;
+                attacker.moved = true; // 攻撃したら行動終了
                 deselectUnit();
                 checkVictoryCondition();
                 gameState = 'IDLE';
@@ -564,12 +590,13 @@
             if (currentTurn !== 'player' || gameState !== 'IDLE') return;
 
             const allPlayerUnitsMoved = units
-                .filter(u => u.owner === 'player')
+                .filter(u => u.owner === 'player' && u.hp > 0)
                 .every(u => u.moved);
 
             if (allPlayerUnitsMoved) {
                 showMessageModal('全ユニット行動終了<br>エネミーターンに移行します');
                 setTimeout(() => {
+                    // handleEndTurn() を呼ぶことで、侵略カウンターリセット処理も実行される
                     handleEndTurn();
                 }, 1500);
             }
@@ -597,31 +624,48 @@
                     });
 
                     const dist = Math.abs(closestTarget.x - unit.x) + Math.abs(closestTarget.y - unit.y);
-                    if (dist <= unit.attackRange) {
+                    
+                    if (dist > 0 && dist <= unit.attackRange) {
+                        // 攻撃範囲内なら攻撃
                         handleAttack(unit, closestTarget);
                     } else {
-                        const dx = closestTarget.x - unit.x;
-                        const dy = closestTarget.y - unit.y;
-                        let moveX = unit.x, moveY = unit.y;
-                        if (Math.abs(dx) > Math.abs(dy)) {
-                            moveX += Math.sign(dx);
-                        } else if (Math.abs(dy) > 0) {
-                            moveY += Math.sign(dy);
-                        }
-                        if(moveX >= 0 && moveX < MAP_WIDTH && moveY >= 0 && moveY < MAP_HEIGHT) {
-                            const targetTile = mapData[moveY][moveX];
-                            if(!units.find(u => u.x === moveX && u.y === moveY) && targetTile.moveCost < 99) {
-                                unit.x = moveX;
-                                unit.y = moveY;
+                        // 攻撃範囲外なら移動
+                        const neighbors = [ { dx: 1, dy: 0 }, { dx: -1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 0, dy: -1 }];
+                        
+                        // 最適な移動先を探索 (ここでは簡易的な移動のみ)
+                        let bestMove = { x: unit.x, y: unit.y, score: -Infinity };
+                        
+                        neighbors.forEach(({ dx, dy }) => {
+                            const nx = unit.x + dx;
+                            const ny = unit.y + dy;
+                            if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT) {
+                                const targetTile = mapData[ny][nx];
+                                const unitAtTarget = units.find(u => u.x === nx && u.y === ny);
+
+                                if (!unitAtTarget && targetTile.moveCost <= unit.moveRange) {
+                                    const newDist = Math.abs(closestTarget.x - nx) + Math.abs(closestTarget.y - ny);
+                                    let score = -newDist; // 距離が近いほどスコアが高い
+
+                                    if (score > bestMove.score) {
+                                        bestMove = { x: nx, y: ny, score: score };
+                                    }
+                                }
                             }
+                        });
+
+                        if (bestMove.x !== unit.x || bestMove.y !== unit.y) {
+                            unit.x = bestMove.x;
+                            unit.y = bestMove.y;
                         }
+
                         unit.moved = true;
                         setTimeout(() => { i++; processNextUnit(); }, 50); 
                         return;
                     }
                 } else {
-                    unit.moved = true;
+                    unit.moved = true; // 攻撃対象がいなければ終了
                 }
+                // 攻撃アニメーションの終了を待つ
                 setTimeout(() => { i++; processNextUnit(); }, 1600); 
             };
             processNextUnit();
@@ -646,14 +690,14 @@
             content.innerHTML = '<h4 class="text-md font-bold mb-2">味方ユニット</h4>';
             units.filter(u => u.owner === 'player').forEach(u => {
                 content.innerHTML += `<div class="p-2 my-1 border-b border-gray-700">
-                    <span class="font-bold text-lg">[${u.displayId}]</span> <span class="font-semibold">${u.name}</span> - HP: ${u.hp}/${u.maxHp} (行動済: ${u.moved ? 'はい' : 'いいえ'})
+                    <span class="font-bold text-lg">[${u.displayId}]</span> <span class="font-semibold">${u.name}</span> - HP: ${u.hp}/${u.maxHp} (射程: ${u.attackRange}) (行動済: ${u.moved ? 'はい' : 'いいえ'})
                 </div>`;
             });
 
             content.innerHTML += '<h4 class="text-md font-bold mt-4 mb-2">敵ユニット</h4>';
             units.filter(u => u.owner === 'enemy').forEach(u => {
                 content.innerHTML += `<div class="p-2 my-1 border-b border-gray-700">
-                     <span class="font-bold text-lg">[${u.displayId}]</span> <span class="font-semibold">${u.name}</span> - HP: ${u.hp}/${u.maxHp}
+                     <span class="font-bold text-lg">[${u.displayId}]</span> <span class="font-semibold">${u.name}</span> - HP: ${u.hp}/${u.maxHp} (射程: ${u.attackRange})
                 </div>`;
             });
             unitListModal.classList.remove('hidden');
@@ -686,11 +730,24 @@
                 if (selectedUnit && !selectedUnit.moved) {
                     const currentTile = mapData[selectedUnit.y][selectedUnit.x];
                     if (currentTile.name === '都市' && !currentTile.isCapital) {
-                        searchBtn.disabled = false;
+                        searchBtn.disabled = true; // 捜索は移動・攻撃後の待機とセット
+                        // 捜索は一旦無効に
                     }
                     if (currentTile.isCapital) {
-                        invadeBtn.disabled = false;
+                        invadeBtn.disabled = true; // 侵略も待機とセット
+                        // 侵略は一旦無効に
                     }
+                    
+                    // ユニットが移動を完了していない（つまり行動前）なら、侵略/捜索をボタン操作で許可
+                    const hasMoved = moveHighlights.length === 0 && selectedUnit.x !== -1; // -1は適当な初期値チェック
+                    if (selectedUnit.x === ENEMY_CAPITAL.x && selectedUnit.y === ENEMY_CAPITAL.y) {
+                         invadeBtn.disabled = false;
+                    }
+                    const tile = mapData[selectedUnit.y][selectedUnit.x];
+                    if (tile.name === '都市' && !tile.isCapital) {
+                        searchBtn.disabled = false;
+                    }
+
                 }
             } else {
                 endTurnBtn.disabled = true;
@@ -703,7 +760,8 @@
             const terrain = hoverTerrain || (selectedUnit ? mapData[selectedUnit.y][selectedUnit.x] : null);
 
             if (unit) {
-                unitInfoDiv.innerHTML = `${turnText}<br><b>[${unit.displayId}] ${unit.name}</b><br>HP: ${unit.hp}/${unit.maxHp} | ATK: ${unit.attack} | DEF: ${unit.defense}`;
+                const status = unit.moved ? '行動済' : '待機中';
+                unitInfoDiv.innerHTML = `${turnText}<br><b>[${unit.displayId}] ${unit.name}</b> (${status})<br>HP: ${unit.hp}/${unit.maxHp} | ATK: ${unit.attack} | DEF: ${unit.defense} | 射程: ${unit.attackRange}`;
             } else {
                  unitInfoDiv.innerHTML = turnText;
             }
@@ -784,9 +842,14 @@
             const visited = new Map();
             visited.set(`${unit.x},${unit.y}`, 0);
 
-            while (queue.length > 0) {
+            let maxIterations = MAP_WIDTH * MAP_HEIGHT * 2; // 安全のためのループ上限
+            let count = 0;
+
+            while (queue.length > 0 && count < maxIterations) {
                 const { x, y, cost } = queue.shift();
                 const neighbors = [ { dx: 1, dy: 0 }, { dx: -1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 0, dy: -1 }];
+                count++;
+                
                 neighbors.forEach(({ dx, dy }) => {
                     const nx = x + dx;
                     const ny = y + dy;
@@ -796,16 +859,30 @@
                         const newCost = cost + moveCost;
                         const posKey = `${nx},${ny}`;
                         const unitAtNewPos = units.find(u => u.x === nx && u.y === ny);
-                        if (newCost <= unit.moveRange && moveCost < 99 && (!unitAtNewPos || unitAtNewPos.owner === unit.owner)) { 
-                            if (!visited.has(posKey) || newCost < visited.get(posKey)) {
-                                visited.set(posKey, newCost);
-                                if (!unitAtNewPos) moveHighlights.push({ x: nx, y: ny });
-                                queue.push({ x: nx, y: ny, cost: newCost });
+
+                        // 移動コスト99（海）は移動不可
+                        if (moveCost < 99 && newCost <= unit.moveRange) { 
+                            // 移動先にユニットがいない、または自身のユニットがいる場合 (味方通過)
+                            if (!unitAtNewPos || unitAtNewPos.owner === unit.owner) {
+                                if (!visited.has(posKey) || newCost < visited.get(posKey)) {
+                                    visited.set(posKey, newCost);
+                                    
+                                    // 敵ユニットがいない、または自身の初期位置ではない
+                                    if (!unitAtNewPos || (unitAtNewPos.x === unit.x && unitAtNewPos.y === unit.y)) {
+                                        if (!(unitAtNewPos && unitAtNewPos.owner === unit.owner && unitAtNewPos !== unit)) {
+                                            moveHighlights.push({ x: nx, y: ny });
+                                        }
+                                        queue.push({ x: nx, y: ny, cost: newCost });
+                                    }
+                                }
                             }
                         }
                     }
                 });
             }
+
+            // 初期位置をハイライトから削除 (既に選択中なので)
+            moveHighlights = moveHighlights.filter(p => p.x !== unit.x || p.y !== unit.y);
         }
 
         function calculateAttackRange(unit) {
@@ -913,6 +990,7 @@
                     if (spriteSheet && spriteSheet.complete) {
                         ctx.drawImage(spriteSheet, sx, sy, TILE_SPRITE_SIZE, TILE_SPRITE_SIZE, x * tileSize, y * tileSize, tileSize, tileSize);
                     } else {
+                        // 画像がない場合の代替描画
                         ctx.fillStyle = tile.name === '海' ? '#3b82f6' : tile.name === '都市' ? '#fde047' : '#10b981';
                         ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
                     }
@@ -939,6 +1017,7 @@
                 for (let x = 0; x < MAP_WIDTH; x++) {
                     const tile = mapData[y][x];
                     m_ctx.fillStyle = tile.name === '海' ? '#3b82f6' : tile.name === '都市' ? '#fde047' : '#10b981';
+                    if (tile.name === '沼地') m_ctx.fillStyle = '#65a30d'; // 沼地のミニマップ色
                     m_ctx.fillRect(x * m_tileSizeX, y * m_tileSizeY, m_tileSizeX, m_tileSizeY);
                     if (tile.isCapital) {
                          m_ctx.fillStyle = 'rgba(255, 0, 0, 0.8)';
@@ -1092,9 +1171,8 @@
         function handleCanvasMouseUp(e) {
             isDragging = false;
 
-            // 修正されたロジック: ドラッグが発生していなければ、選択/行動処理を実行
+            // ドラッグが発生していなければ、選択/行動処理を実行
             if (!hasDragged) {
-                // タッチ終了またはマウスアップの座標を使って操作ロジックを実行
                 handleSelectionAction(e); 
             }
         }
@@ -1130,4 +1208,3 @@
     </script>
 </body>
 </html>
-
